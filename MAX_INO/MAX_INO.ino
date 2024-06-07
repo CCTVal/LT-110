@@ -2,8 +2,13 @@
 #include "stdio.h"
 #include "stdbool.h"
 #include "stdlib.h"
+#include "PWFusion_MAX31856.h" // Thermocouples reader chip
 
 #define MAX_COMND_COUNT 3 // Número máximo de veces consecutivas para el mismo carácter
+#define NUM_THERMOCOUPLES   (sizeof(tcChipSelects) / sizeof(uint8_t)) // number of thermocouples to read
+
+uint8_t tcChipSelects[] = {7, 8, 9, 10};  // define chip select pins for each thermocouple
+MAX31856 thermocouples[NUM_THERMOCOUPLES];
 
 char incoming_byte;
 char last_char;
@@ -13,7 +18,13 @@ int temperatures[16];
 char temperatures_msg[70];
 
 void setup() {
-  // put your setup code here, to run once:
+  delay(1000); // Give the MAX31856 a chance to stabilize
+  // Initialize each MAX31856... options can be seen in the PWFusion_MAX31856.h file
+  for (int i=0; i<NUM_THERMOCOUPLES; i++)
+  {
+    thermocouples[i].begin(tcChipSelects[i]);
+    thermocouples[i].config(K_TYPE, CUTOFF_50HZ, AVG_SEL_4SAMP, CMODE_AUTO); // TODO change to 60Hz for USA
+  }
   last_char = '\0'; // Variable para almacenar el último carácter recibido
   same_char_count = 0; // Contador para contar la cantidad de veces consecutivas que se ha recibido el mismo carácter
   chars_to_expect = -1; // Counter for the digits that should be sent from the SMART in commands like GGG
@@ -39,10 +50,59 @@ void done() {
 }
 
 void read_temperatures() {
+
   temperatures[0] = 3500;  temperatures[1]  = 3600; temperatures[2]  = 3700; temperatures[3]  = 3800;
   temperatures[4] = 3500;  temperatures[5]  = 3600; temperatures[6]  = 3700; temperatures[7]  = 3800;
   temperatures[8] = 3500;  temperatures[9]  = 3600; temperatures[10] = 3700; temperatures[11] = 3800;
   temperatures[12] = 3500; temperatures[13] = 3600; temperatures[14] = 3700; temperatures[15] = 3800;
+
+  for (int i=0; i<NUM_THERMOCOUPLES; i++)
+  {
+    // Get latest measurement from MAX31856 channels
+    thermocouples[i].sample();
+  
+    // Print information to serial port
+    //print31856Results(i, thermocouples[i]);
+    MAX31856 tc = thermocouples[i];
+    uint8_t status = tc.getStatus();
+
+    if(status)
+    {
+      // lots of faults possible at once, technically... handle all 8 of them
+      // Faults detected can be masked, please refer to library file to enable faults you want represented
+      digitalWrite(LED_BUILTIN, HIGH);
+      /*
+      if(TC_FAULT_OPEN & status)        { Serial.print(F("OPEN, ")); }
+      if(TC_FAULT_VOLTAGE_OOR & status) { Serial.print(F("Overvolt/Undervolt, ")); }
+      if(TC_FAULT_TC_TEMP_LOW & status) { Serial.print(F("TC Low, ")); }
+      if(TC_FAULT_TC_TEMP_HIGH & status){ Serial.print(F("TC High, ")); }
+      if(TC_FAULT_CJ_TEMP_LOW & status) { Serial.print(F("CJ Low, ")); }
+      if(TC_FAULT_CJ_TEMP_HIGH & status){ Serial.print(F("CJ High, ")); }
+      if(TC_FAULT_TC_OOR & status)      { Serial.print(F("TC Range, ")); }
+      if(TC_FAULT_CJ_OOR & status)      { Serial.print(F("CJ Range, ")); }
+      */
+    }
+    else { // no fault, print temperature data
+      // cold_junction_temperature = tc.getColdJunctionTemperature();
+      int temp = int(tc.getTemperature() * 100);
+      if (temp < 1000)
+      {
+        temp = 1000;
+      } else if(temp > 9999) {
+        temp = 9999;
+      }
+      temperatures[i] = temp;
+    }
+  
+    // Attempt to recove misconfigured channels
+    if(thermocouples[i].getStatus() == 0xFF)
+    {
+      thermocouples[i].config(K_TYPE, CUTOFF_60HZ, AVG_SEL_1SAMP, CMODE_AUTO);
+      digitalWrite(LED_BUILTIN, HIGH); // Tell there is some error
+    }
+  }
+
+  
   //temperatures_msg = "EEE3500360037003800350036003700380035003600370038003500360037003800LH";
 }
 
